@@ -29,7 +29,6 @@ MONGODB_URI=
 MONGODB_DB=porra
 STRIPE_SECRET_KEY=
 STRIPE_WEBHOOK_SECRET=
-CRON_SECRET=
 NEXT_PUBLIC_APP_URL=http://localhost:3000
 THESPORTSDB_API_KEY=
 ```
@@ -66,19 +65,9 @@ Copia el `whsec_...` que devuelve Stripe en `STRIPE_WEBHOOK_SECRET`.
 3. Copia el secret del endpoint en Vercel como `STRIPE_WEBHOOK_SECRET`.
 4. Usa `STRIPE_SECRET_KEY` en modo live o test según el entorno.
 
-## Cron automático en Vercel
+## Sincronización de datos
 
-Este repo ya incluye [vercel.json](/Users/sulivan/Desktop/Porra/vercel.json) con un cron:
-
-- `0 */2 * * *` -> llama `GET /api/cron/sync` cada 2 horas.
-
-Para activarlo en producción:
-
-1. En Vercel, añade `CRON_SECRET` (valor largo y aleatorio).
-2. Redeploy del proyecto.
-3. Verifica en logs de Vercel que entra tráfico a `/api/cron/sync`.
-
-La ruta está protegida y solo acepta peticiones con `Authorization: Bearer <CRON_SECRET>`.
+De momento la sincronización se ejecuta de forma manual desde el panel `/admin`, usando los botones de sync por competición.
 
 ## Colecciones MongoDB
 

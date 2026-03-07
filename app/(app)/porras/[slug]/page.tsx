@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 
-import { InviteFriendButton } from "@/components/invite-friend-button";
+
 import { LeaderboardTable } from "@/components/leaderboard-table";
 import { getCompetitionCatalogItem } from "@/lib/competition-catalog";
 import { payoutRules } from "@/lib/data";
@@ -28,11 +28,7 @@ export default async function PorraDetailPage({ params }: { params: Promise<{ sl
             <span className="eyebrow">Porra</span>
             <h1>{porra.name}</h1>
           </div>
-          <InviteFriendButton
-            slug={slug}
-            porraName={porra.name}
-            competitionLabel={getCompetitionLabel(porra.competitionKey)}
-          />
+
         </div>
         <p className="porra-detail-meta">
           {competition.logo ? (

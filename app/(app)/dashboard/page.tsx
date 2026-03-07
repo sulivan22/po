@@ -21,7 +21,7 @@ export default async function DashboardPage({
   const userId = session.user.email ?? "";
   const [porras, entries] = await Promise.all([listPorrasByUser(userId), getUserEntries(userId)]);
   const leaderboardSummaries = await Promise.all(
-    porras.slice(0, 2).map(async (porra) => ({
+    porras.map(async (porra) => ({
       porra,
       rows: (await getLeaderboard(porra.slug)).slice(0, 3)
     }))
