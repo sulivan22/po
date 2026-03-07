@@ -383,6 +383,43 @@ img {
   margin-bottom: 10px;
 }
 
+.my-selection-panel {
+  min-width: min(340px, 100%);
+}
+
+.my-selection-panel summary {
+  list-style: none;
+}
+
+.my-selection-panel summary::-webkit-details-marker {
+  display: none;
+}
+
+.my-selection-content {
+  margin-top: 10px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  display: grid;
+  gap: 10px;
+}
+
+.my-selection-list {
+  display: grid;
+  gap: 8px;
+}
+
+.my-selection-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: #fff;
+}
+
 .landing-anchor-bar {
   display: flex;
   gap: 10px;
