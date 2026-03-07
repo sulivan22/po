@@ -5,10 +5,12 @@ import { getCompetitionCatalog } from "@/lib/competition-catalog";
 
 export default async function HomePage() {
   const competitions = await getCompetitionCatalog();
-  const highlightImages = competitions
-    .flatMap((competition) => competition.teams.map((team) => team.image))
-    .filter((image): image is string => Boolean(image))
-    .slice(0, 8);
+  const championsCompetition = competitions.find((competition) => competition.key === "champions-league");
+  const highlightImages =
+    championsCompetition?.teams
+      .map((team) => team.image)
+      .filter((image): image is string => Boolean(image))
+      .slice(0, 8) ?? [];
 
   return (
     <div className="page-stack">

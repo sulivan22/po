@@ -91,7 +91,9 @@ export default async function DashboardPage({
                       </span>
                       {competitionLogos.get(porra.competitionKey) ? (
                         <img
-                          className="competition-inline-logo"
+                          className={`competition-inline-logo ${
+                            porra.competitionKey === "champions-league" ? "competition-badge-dark" : ""
+                          }`}
                           src={competitionLogos.get(porra.competitionKey)!}
                           alt={`Logo ${getCompetitionLabel(porra.competitionKey)}`}
                           width="40"

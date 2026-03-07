@@ -73,7 +73,9 @@ export default async function PorraDetailPage({ params }: { params: Promise<{ sl
         <p className="porra-detail-meta">
           {competition.logo ? (
             <img
-              className="competition-inline-logo"
+              className={`competition-inline-logo ${
+                porra.competitionKey === "champions-league" ? "competition-badge-dark" : ""
+              }`}
               src={competition.logo}
               alt={`Logo ${getCompetitionLabel(porra.competitionKey)}`}
               width="50"
