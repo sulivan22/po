@@ -16,6 +16,7 @@ import {
   Pick,
   Porra,
   SyncLog,
+  Team,
   TeamProgress
 } from "@/lib/types";
 
@@ -376,27 +377,25 @@ export async function updateAllEntryScores(competitionKey: CompetitionKey, progr
   }
 
   let formulaOneEventPoints: FormulaOneEventPoints[] = [];
+  let footballEvents: SportsDbEvent[] = [];
   if (competitionKey === "formula-1") {
     const events = await db
       .collection<SportsDbEvent & { competitionKey: CompetitionKey }>("competitionEvents")
       .find({ competitionKey })
       .toArray();
     formulaOneEventPoints = await buildFormulaOneEventPoints(events);
+  } else {
+    footballEvents = await db
+      .collection<SportsDbEvent & { competitionKey: CompetitionKey }>("competitionEvents")
+      .find({ competitionKey })
+      .toArray();
   }
 
   const operations = entries.map((entry) => {
     const totalScore =
       competitionKey === "formula-1"
         ? calculateFormulaOneEntryTotal(entry, formulaOneEventPoints)
-        : (() => {
-            const baselineMap = new Map((entry.progressBaseline ?? []).map((item) => [item.teamCode, item]));
-            return entry.picks.reduce((sum, pick) => {
-              const currentProgress = progress.find((item) => item.teamCode === pick.teamCode);
-              const baselineProgress = baselineMap.get(pick.teamCode);
-              const deltaProgress = getProgressDelta(competitionKey, currentProgress, baselineProgress);
-              return sum + getWeightedPickScore(pick, deltaProgress, competitionKey);
-            }, 0);
-          })();
+        : calculateFootballEntryTotal({ entry, competitionKey, events: footballEvents });
 
     return {
       updateOne: {
@@ -513,20 +512,11 @@ function materializeLeaderboard(
   return entries
     .map((entry) => {
       const baselineMap = new Map((entry.progressBaseline ?? []).map((item) => [item.teamCode, item]));
-      const totalScore =
-        competitionKey === "formula-1"
-          ? entry.totalScore
-          : entry.picks.reduce((sum, pick) => {
-              const currentProgress = progress.find((item) => item.teamCode === pick.teamCode);
-              const baselineProgress = baselineMap.get(pick.teamCode);
-              const deltaProgress = getProgressDelta(competitionKey, currentProgress, baselineProgress);
-              return sum + getWeightedPickScore(pick, deltaProgress, competitionKey);
-            }, 0);
 
       return {
         userId: entry.userId,
         displayName: entry.displayName,
-        totalScore,
+        totalScore: entry.totalScore,
         prizeProjection: "Pendiente",
         picks: entry.picks.map((pick) => {
           const team =
@@ -636,6 +626,8 @@ type FormulaOneEventPoints = {
   driverPoints: Map<string, number>;
 };
 
+type FootballStage = "round16" | "quarter" | "semi" | "final" | "third-place" | null;
+
 async function buildFormulaOneEventPoints(events: SportsDbEvent[]) {
   const raceEvents = sortByDateAsc(events).filter((event) => isFormulaOneRaceEvent(event) && Boolean(event.idEvent));
 
@@ -687,6 +679,219 @@ function calculateFormulaOneEntryTotal(entry: Entry, eventPoints: FormulaOneEven
 
     return total;
   }, 0);
+}
+
+function getFootballStageLabel(event: SportsDbEvent): FootballStage {
+  const source = `${event.strEvent ?? ""} ${event.strFilename ?? ""}`.toLowerCase();
+
+  if (/(third|3rd).*(place|play[- ]?off)|play[- ]?off.*(third|3rd)/.test(source)) {
+    return "third-place";
+  }
+  if (/semi/.test(source)) {
+    return "semi";
+  }
+  if (/quarter/.test(source)) {
+    return "quarter";
+  }
+  if (/(round of 16|last 16|round-of-16|octavos)/.test(source)) {
+    return "round16";
+  }
+  if (/\bfinal\b/.test(source)) {
+    return "final";
+  }
+
+  return null;
+}
+
+function getFootballStageBonus(stage: FootballStage) {
+  switch (stage) {
+    case "round16":
+      return { label: "Pasa a octavos", points: 5 };
+    case "quarter":
+      return { label: "Pasa a cuartos", points: 15 };
+    case "semi":
+      return { label: "Pasa a semifinales", points: 30 };
+    case "final":
+      return { label: "Pasa a la final", points: 50 };
+    default:
+      return null;
+  }
+}
+
+function buildFootballBonusesFromEvents(input: {
+  picks: Pick[];
+  competitionKey: CompetitionKey;
+  events: SportsDbEvent[];
+  joinedAtTimestamp: number | null;
+  teamMap?: Map<string, Team>;
+}) {
+  const pickMap = new Map(input.picks.map((pick) => [pick.teamCode, pick]));
+  const awarded = new Set<string>();
+  const bonuses: BonusScoreBreakdown[] = [];
+  const hasJoinTimestamp = input.joinedAtTimestamp !== null;
+
+  for (const event of sortByDateAsc(input.events)) {
+    if (hasJoinTimestamp) {
+      const eventTimestamp = parseEventTimestamp(event);
+      if (eventTimestamp === null || eventTimestamp < input.joinedAtTimestamp!) {
+        continue;
+      }
+    }
+
+    const homeCode = event.idHomeTeam ?? null;
+    const awayCode = event.idAwayTeam ?? null;
+    const homeScore = toScore(event.intHomeScore);
+    const awayScore = toScore(event.intAwayScore);
+
+    if (!homeCode || !awayCode || homeScore === null || awayScore === null) {
+      continue;
+    }
+
+    const stage = getFootballStageLabel(event);
+
+    const stageBonus = getFootballStageBonus(stage);
+    if (stageBonus) {
+      for (const teamCode of [homeCode, awayCode]) {
+        const pick = pickMap.get(teamCode);
+        if (!pick) {
+          continue;
+        }
+
+        const awardKey = `${teamCode}:${stage}`;
+        if (awarded.has(awardKey)) {
+          continue;
+        }
+        awarded.add(awardKey);
+
+        const team = input.teamMap?.get(teamCode);
+        const multiplier = getRankMultiplier(pick.rank, input.competitionKey);
+        bonuses.push({
+          teamCode,
+          teamName: team?.name ?? teamCode,
+          teamImage: team?.image,
+          groupName: team?.groupName,
+          groupImage: team?.groupImage,
+          rank: pick.rank,
+          multiplier,
+          label: stageBonus.label,
+          basePoints: stageBonus.points,
+          weightedPoints: stageBonus.points * multiplier
+        });
+      }
+    }
+
+    if (homeScore === awayScore) {
+      continue;
+    }
+
+    const winnerCode = homeScore > awayScore ? homeCode : awayCode;
+    const winnerPick = pickMap.get(winnerCode);
+    if (!winnerPick) {
+      continue;
+    }
+
+    if (stage === "third-place") {
+      const thirdKey = `${winnerCode}:third-place-win`;
+      if (!awarded.has(thirdKey)) {
+        awarded.add(thirdKey);
+        const team = input.teamMap?.get(winnerCode);
+        const multiplier = getRankMultiplier(winnerPick.rank, input.competitionKey);
+        bonuses.push({
+          teamCode: winnerCode,
+          teamName: team?.name ?? winnerCode,
+          teamImage: team?.image,
+          groupName: team?.groupName,
+          groupImage: team?.groupImage,
+          rank: winnerPick.rank,
+          multiplier,
+          label: "Gana el 3er puesto",
+          basePoints: 15,
+          weightedPoints: 15 * multiplier
+        });
+      }
+    }
+
+    if (stage === "final") {
+      const championKey = `${winnerCode}:champion`;
+      if (!awarded.has(championKey)) {
+        awarded.add(championKey);
+        const team = input.teamMap?.get(winnerCode);
+        const multiplier = getRankMultiplier(winnerPick.rank, input.competitionKey);
+        bonuses.push({
+          teamCode: winnerCode,
+          teamName: team?.name ?? winnerCode,
+          teamImage: team?.image,
+          groupName: team?.groupName,
+          groupImage: team?.groupImage,
+          rank: winnerPick.rank,
+          multiplier,
+          label: "Gana el torneo",
+          basePoints: 100,
+          weightedPoints: 100 * multiplier
+        });
+      }
+    }
+  }
+
+  return bonuses;
+}
+
+function calculateFootballEntryTotal(input: {
+  entry: Entry;
+  competitionKey: CompetitionKey;
+  events: SportsDbEvent[];
+}) {
+  const pickMap = new Map(input.entry.picks.map((pick) => [pick.teamCode, pick]));
+  const joinedAtTimestamp = Date.parse(input.entry.joinedAt ?? "");
+  const hasJoinTimestamp = Number.isFinite(joinedAtTimestamp);
+
+  const matchWeighted = sortByDateAsc(input.events).reduce((sum, event) => {
+    if (hasJoinTimestamp) {
+      const eventTimestamp = parseEventTimestamp(event);
+      if (eventTimestamp === null || eventTimestamp < joinedAtTimestamp) {
+        return sum;
+      }
+    }
+
+    const homeCode = event.idHomeTeam ?? null;
+    const awayCode = event.idAwayTeam ?? null;
+    const homeScore = toScore(event.intHomeScore);
+    const awayScore = toScore(event.intAwayScore);
+
+    if (!homeCode || !awayCode || homeScore === null || awayScore === null) {
+      return sum;
+    }
+
+    const sides = [
+      { teamCode: homeCode, goalsFor: homeScore, goalsAgainst: awayScore },
+      { teamCode: awayCode, goalsFor: awayScore, goalsAgainst: homeScore }
+    ] as const;
+
+    let current = sum;
+    for (const side of sides) {
+      const pick = pickMap.get(side.teamCode);
+      if (!pick) {
+        continue;
+      }
+      const resultPoints = side.goalsFor > side.goalsAgainst ? 3 : side.goalsFor === side.goalsAgainst ? 1 : 0;
+      const goalsForPoints = side.goalsFor;
+      const goalsAgainstPoints = side.goalsAgainst * -0.5;
+      const basePoints = resultPoints + goalsForPoints + goalsAgainstPoints;
+      const multiplier = getRankMultiplier(pick.rank, input.competitionKey);
+      current += basePoints * multiplier;
+    }
+    return current;
+  }, 0);
+
+  const bonuses = buildFootballBonusesFromEvents({
+    picks: input.entry.picks,
+    competitionKey: input.competitionKey,
+    events: input.events,
+    joinedAtTimestamp: hasJoinTimestamp ? joinedAtTimestamp : null
+  });
+
+  const bonusWeighted = bonuses.reduce((sum, bonus) => sum + bonus.weightedPoints, 0);
+  return matchWeighted + bonusWeighted;
 }
 
 function getBonusesForTeam(
@@ -765,8 +970,6 @@ export async function getEntryScoreBreakdown(
       );
 
       const bonuses: BonusScoreBreakdown[] = entry.picks.map((pick) => {
-        const teamProgress = progressMap.get(pick.teamCode);
-        const baselineProgress = baselineMap.get(pick.teamCode);
         const team = teamMap.get(pick.teamCode);
         const multiplier = getRankMultiplier(pick.rank, porra.competitionKey);
         const raceDetails = eventResults
@@ -812,9 +1015,7 @@ export async function getEntryScoreBreakdown(
             } => Boolean(detail)
           );
 
-        const basePointsFromRaces = raceDetails.reduce((sum, detail) => sum + detail.basePoints, 0);
-        const progressDelta = (teamProgress?.baseScore ?? 0) - (baselineProgress?.baseScore ?? 0);
-        const basePoints = raceDetails.length > 0 ? basePointsFromRaces : progressDelta;
+        const basePoints = raceDetails.reduce((sum, detail) => sum + detail.basePoints, 0);
 
         return {
           teamCode: pick.teamCode,
@@ -903,31 +1104,13 @@ export async function getEntryScoreBreakdown(
       }
     }
 
-    const bonuses: BonusScoreBreakdown[] = [];
-    for (const pick of entry.picks) {
-      const teamProgress = progressMap.get(pick.teamCode);
-      if (!teamProgress) {
-        continue;
-      }
-
-      const baselineProgress = baselineMap.get(pick.teamCode) ?? createEmptyProgressBaseline(porra.competitionKey, pick.teamCode);
-      const team = teamMap.get(pick.teamCode);
-      const multiplier = getRankMultiplier(pick.rank, porra.competitionKey);
-      for (const bonus of getBonusesForTeam(teamProgress, baselineProgress)) {
-        bonuses.push({
-          teamCode: pick.teamCode,
-          teamName: team?.name ?? pick.teamCode,
-          teamImage: team?.image,
-          groupName: team?.groupName,
-          groupImage: team?.groupImage,
-          rank: pick.rank,
-          multiplier,
-          label: bonus.label,
-          basePoints: bonus.points,
-          weightedPoints: bonus.points * multiplier
-        });
-      }
-    }
+    const bonuses = buildFootballBonusesFromEvents({
+      picks: entry.picks,
+      competitionKey: porra.competitionKey,
+      events,
+      joinedAtTimestamp: hasJoinTimestamp ? joinedAtTimestamp : null,
+      teamMap
+    });
 
     const totalScore =
       matches.reduce((sum, match) => sum + match.weightedPoints, 0) +
