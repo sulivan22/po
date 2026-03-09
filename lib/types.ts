@@ -131,6 +131,14 @@ export type BonusScoreBreakdown = {
   label: string;
   basePoints: number;
   weightedPoints: number;
+  raceDetails?: Array<{
+    idEvent: string;
+    eventName: string;
+    dateEvent: string;
+    position: number | null;
+    basePoints: number;
+    weightedPoints: number;
+  }>;
 };
 
 export type EntryScoreBreakdown = {

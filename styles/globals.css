@@ -234,6 +234,7 @@ img {
 .primary-button,
 .secondary-button,
 .ghost-button,
+.share-button,
 .team-chip {
   border-radius: 12px;
   border: 1px solid transparent;
@@ -259,9 +260,16 @@ img {
   color: var(--text);
 }
 
+.share-button {
+  background: #f9fbff;
+  border-color: var(--line);
+  color: var(--text);
+}
+
 .primary-button:hover,
 .secondary-button:hover,
 .ghost-button:hover,
+.share-button:hover,
 .team-chip:hover {
   transform: translateY(-1px);
 }
@@ -381,6 +389,14 @@ img {
   align-items: flex-start;
   gap: 12px;
   margin-bottom: 10px;
+}
+
+.detail-actions {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .my-selection-panel {
@@ -853,6 +869,42 @@ label input:disabled {
   border-radius: 999px;
 }
 
+.pilot-race-list {
+  margin-top: 10px;
+  display: grid;
+  gap: 6px;
+}
+
+.pilot-race-panel {
+  margin-top: 10px;
+}
+
+.pilot-race-toggle {
+  list-style: none;
+  cursor: pointer;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #f9fbff;
+  font-weight: 600;
+}
+
+.pilot-race-panel summary::-webkit-details-marker {
+  display: none;
+}
+
+.pilot-race-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: #fff;
+  font-size: 0.9rem;
+}
+
 .constructor-badge {
   border-radius: 0 !important;
 }
@@ -889,6 +941,11 @@ label input:disabled {
     flex-direction: row;
     flex-wrap: wrap;
     justify-content: flex-end;
+  }
+
+  .detail-actions {
+    width: 100%;
+    justify-content: flex-start;
   }
 
   .brand-logo {

@@ -14,7 +14,7 @@ export function InviteFriendButton({
   const { pushToast } = useToast();
 
   async function handleInvite() {
-    const url = `${window.location.origin}/porras/${slug}`;
+    const url = `${window.location.origin}/porras/join?slug=${encodeURIComponent(slug)}`;
     const title = `Únete a la porra ${porraName}`;
     const text = `Te invito a unirte a mi porra (${competitionLabel}).`;
 
@@ -26,7 +26,7 @@ export function InviteFriendButton({
 
       await navigator.clipboard.writeText(url);
       pushToast({
-        title: "Enlace de invitación copiado al portapapeles.",
+        title: "Enlace directo al pago copiado al portapapeles.",
         tone: "success"
       });
     } catch {
@@ -38,8 +38,8 @@ export function InviteFriendButton({
   }
 
   return (
-    <button className="secondary-button" type="button" onClick={handleInvite}>
-      Invitar amigo
+    <button className="share-button" type="button" onClick={handleInvite}>
+      Compartir
     </button>
   );
 }

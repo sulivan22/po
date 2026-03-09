@@ -4,7 +4,7 @@ import { getCompetitionCatalogItem } from "@/lib/competition-catalog";
 import { demoProgress, getCompetitionOption, getTeamsForCompetition } from "@/lib/data";
 import { getDb } from "@/lib/mongodb";
 import { getProgressDelta, getRankMultiplier, getWeightedPickScore } from "@/lib/scoring";
-import { SportsDbEvent } from "@/lib/sportsdb";
+import { fetchEventResults, SportsDbEvent } from "@/lib/sportsdb";
 import {
   BonusScoreBreakdown,
   CompetitionKey,
@@ -545,6 +545,53 @@ function toScore(value?: string | null) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function isFormulaOneRaceEvent(event: SportsDbEvent) {
+  const source = `${event.strEvent ?? ""} ${event.strFilename ?? ""}`.toLowerCase();
+
+  if (!source.includes("grand prix")) {
+    return false;
+  }
+
+  if (
+    source.includes("sprint") ||
+    source.includes("qualifying") ||
+    source.includes("practice") ||
+    source.includes("test") ||
+    source.includes("shootout")
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
+function pointsByRacePosition(position: number) {
+  switch (position) {
+    case 1:
+      return 25;
+    case 2:
+      return 18;
+    case 3:
+      return 15;
+    case 4:
+      return 12;
+    case 5:
+      return 10;
+    case 6:
+      return 8;
+    case 7:
+      return 6;
+    case 8:
+      return 4;
+    case 9:
+      return 2;
+    case 10:
+      return 1;
+    default:
+      return 0;
+  }
+}
+
 function getBonusesForTeam(
   progress: TeamProgress,
   baseline: TeamProgress = createEmptyProgressBaseline(progress.competitionKey, progress.teamCode)
@@ -597,12 +644,77 @@ export async function getEntryScoreBreakdown(
     const joinedAtDate = entry.joinedAt?.slice(0, 10);
 
     if (porra.competitionKey === "formula-1") {
+      const raceEvents = sortByDateAsc(events).filter((event) => {
+        if (!isFormulaOneRaceEvent(event)) {
+          return false;
+        }
+
+        if (joinedAtDate && event.dateEvent && event.dateEvent < joinedAtDate) {
+          return false;
+        }
+
+        return Boolean(event.idEvent);
+      });
+
+      const eventResults = await Promise.all(
+        raceEvents.map(async (event) => ({
+          event,
+          results: await fetchEventResults(event.idEvent).catch(() => [])
+        }))
+      );
+
       const bonuses: BonusScoreBreakdown[] = entry.picks.map((pick) => {
         const teamProgress = progressMap.get(pick.teamCode);
         const baselineProgress = baselineMap.get(pick.teamCode);
         const team = teamMap.get(pick.teamCode);
-        const basePoints = (teamProgress?.baseScore ?? 0) - (baselineProgress?.baseScore ?? 0);
         const multiplier = getRankMultiplier(pick.rank, porra.competitionKey);
+        const raceDetails = eventResults
+          .map(({ event, results }) => {
+            const pilotResults = results.filter((result) => result.idPlayer === pick.teamCode);
+            if (pilotResults.length === 0) {
+              return null;
+            }
+
+            const best = pilotResults.reduce((current, candidate) => {
+              const currentPoints = Number(current.intPoints ?? "");
+              const candidatePoints = Number(candidate.intPoints ?? "");
+              const currentFallback = pointsByRacePosition(Number(current.intPosition ?? ""));
+              const candidateFallback = pointsByRacePosition(Number(candidate.intPosition ?? ""));
+              const currentValue = Number.isFinite(currentPoints) ? currentPoints : currentFallback;
+              const candidateValue = Number.isFinite(candidatePoints) ? candidatePoints : candidateFallback;
+              return candidateValue > currentValue ? candidate : current;
+            });
+
+            const apiPoints = Number(best.intPoints ?? "");
+            const position = Number(best.intPosition ?? "");
+            const basePoints = Number.isFinite(apiPoints) ? apiPoints : pointsByRacePosition(position);
+
+            return {
+              idEvent: event.idEvent,
+              eventName: event.strEvent ?? "Grand Prix",
+              dateEvent: event.dateEvent ?? "",
+              position: Number.isFinite(position) ? position : null,
+              basePoints,
+              weightedPoints: basePoints * multiplier
+            };
+          })
+          .filter(
+            (
+              detail
+            ): detail is {
+              idEvent: string;
+              eventName: string;
+              dateEvent: string;
+              position: number | null;
+              basePoints: number;
+              weightedPoints: number;
+            } => Boolean(detail)
+          );
+
+        const basePointsFromRaces = raceDetails.reduce((sum, detail) => sum + detail.basePoints, 0);
+        const progressDelta = (teamProgress?.baseScore ?? 0) - (baselineProgress?.baseScore ?? 0);
+        const basePoints = raceDetails.length > 0 ? basePointsFromRaces : progressDelta;
+
         return {
           teamCode: pick.teamCode,
           teamName: team?.name ?? pick.teamCode,
@@ -613,7 +725,8 @@ export async function getEntryScoreBreakdown(
           multiplier,
           label: "Puntos acumulados en Grand Prix",
           basePoints,
-          weightedPoints: basePoints * multiplier
+          weightedPoints: basePoints * multiplier,
+          raceDetails
         };
       });
 

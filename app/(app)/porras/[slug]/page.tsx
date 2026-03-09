@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 
 import { auth } from "@/auth";
+import { InviteFriendButton } from "@/components/invite-friend-button";
 import { TeamAvatar } from "@/components/team-avatar";
 
 import { LeaderboardTable } from "@/components/leaderboard-table";
@@ -50,24 +51,33 @@ export default async function PorraDetailPage({ params }: { params: Promise<{ sl
             <span className="eyebrow">Porra</span>
             <h1>{porra.name}</h1>
           </div>
-          {userSelection.length > 0 ? (
-            <details className="my-selection-panel">
-              <summary className="ghost-button">Tu selección</summary>
-              <div className="my-selection-content">
-                <strong>Orden de tu selección</strong>
-                <div className="my-selection-list">
-                  {userSelection.map((item) => (
-                    <div className="my-selection-row" key={`${item.rank}-${item.team.code}`}>
-                      <span className="rank-pill">#{item.rank}</span>
-                      <span className="score-line-team">
-                        <TeamAvatar team={item.team} />
-                        <span>{item.team.name}</span>
-                      </span>
+          {session?.user ? (
+            <div className="detail-actions">
+              {userSelection.length > 0 ? (
+                <details className="my-selection-panel">
+                  <summary className="ghost-button">Tu selección</summary>
+                  <div className="my-selection-content">
+                    <strong>Orden de tu selección</strong>
+                    <div className="my-selection-list">
+                      {userSelection.map((item) => (
+                        <div className="my-selection-row" key={`${item.rank}-${item.team.code}`}>
+                          <span className="rank-pill">#{item.rank}</span>
+                          <span className="score-line-team">
+                            <TeamAvatar team={item.team} />
+                            <span>{item.team.name}</span>
+                          </span>
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
-              </div>
-            </details>
+                  </div>
+                </details>
+              ) : null}
+              <InviteFriendButton
+                slug={porra.slug}
+                porraName={porra.name}
+                competitionLabel={getCompetitionLabel(porra.competitionKey)}
+              />
+            </div>
           ) : null}
         </div>
         <p className="porra-detail-meta">

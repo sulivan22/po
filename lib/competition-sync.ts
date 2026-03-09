@@ -188,6 +188,26 @@ function pointsByRacePosition(position: number) {
   }
 }
 
+function isFormulaOneRaceEvent(event: SportsDbEvent) {
+  const source = `${event.strEvent ?? ""} ${event.strFilename ?? ""}`.toLowerCase();
+
+  if (!source.includes("grand prix")) {
+    return false;
+  }
+
+  if (
+    source.includes("sprint") ||
+    source.includes("qualifying") ||
+    source.includes("practice") ||
+    source.includes("test") ||
+    source.includes("shootout")
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
 async function materializeFormulaOneProgress(events: SportsDbEvent[], driverCodes: string[]) {
   const progressMap = getProgressMap("formula-1", driverCodes);
 
@@ -196,20 +216,38 @@ async function materializeFormulaOneProgress(events: SportsDbEvent[], driverCode
       continue;
     }
 
+    if (!isFormulaOneRaceEvent(event)) {
+      continue;
+    }
+
     const eventResults = await fetchEventResults(event.idEvent).catch(() => []);
+    const driverBestPoints = new Map<string, number>();
+
     for (const result of eventResults) {
       const driverCode = result.idPlayer ?? null;
       const position = Number(result.intPosition ?? "");
-      if (!driverCode || !Number.isFinite(position)) {
+      if (!driverCode) {
         continue;
       }
 
+      const pointsFromApi = Number(result.intPoints ?? "");
+      const hasApiPoints = Number.isFinite(pointsFromApi);
+
+      if (!hasApiPoints && !Number.isFinite(position)) {
+        continue;
+      }
+
+      const points = hasApiPoints ? pointsFromApi : pointsByRacePosition(position);
+      const current = driverBestPoints.get(driverCode) ?? Number.NEGATIVE_INFINITY;
+      driverBestPoints.set(driverCode, Math.max(current, points));
+    }
+
+    for (const [driverCode, points] of driverBestPoints.entries()) {
       const progress = progressMap.get(driverCode);
       if (!progress) {
         continue;
       }
-
-      progress.baseScore = (progress.baseScore ?? 0) + pointsByRacePosition(position);
+      progress.baseScore = (progress.baseScore ?? 0) + points;
     }
   }
 

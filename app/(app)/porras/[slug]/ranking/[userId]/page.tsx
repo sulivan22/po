@@ -135,6 +135,24 @@ export default async function EntryRankingDetailPage({
                       {isFormulaOne ? `Puesto #${bonus.rank} · x${bonus.multiplier}` : `${bonus.label} · Puesto #${bonus.rank} · x${bonus.multiplier}`}
                     </p>
                     <p>Base: {bonus.basePoints.toFixed(1)} pts</p>
+                    {isFormulaOne && bonus.raceDetails && bonus.raceDetails.length > 0 ? (
+                      <details className="pilot-race-panel">
+                        <summary className="pilot-race-toggle">Ver resumen por carreras</summary>
+                        <div className="pilot-race-list">
+                          {bonus.raceDetails.map((race) => (
+                            <div className="pilot-race-row" key={`${bonus.teamCode}-${race.idEvent}`}>
+                              <span>
+                                {race.eventName} {race.dateEvent ? `(${race.dateEvent})` : ""}
+                              </span>
+                              <span>
+                                Pos: {race.position ?? "-"} · Base: {race.basePoints.toFixed(1)} · x
+                                {bonus.multiplier} = {race.weightedPoints.toFixed(1)}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </details>
+                    ) : null}
                   </div>
                   <strong>{bonus.weightedPoints.toFixed(1)} pts</strong>
                 </article>
