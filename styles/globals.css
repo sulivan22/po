@@ -261,7 +261,7 @@ img {
 }
 
 .share-button {
-  background: #f9fbff;
+  background: #c9ffef;
   border-color: var(--line);
   color: var(--text);
 }
@@ -910,6 +910,7 @@ label input:disabled {
 }
 
 @media (max-width: 900px) {
+
   .hero,
   .dashboard-hero,
   .two-column,

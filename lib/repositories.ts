@@ -375,14 +375,28 @@ export async function updateAllEntryScores(competitionKey: CompetitionKey, progr
     return 0;
   }
 
+  let formulaOneEventPoints: FormulaOneEventPoints[] = [];
+  if (competitionKey === "formula-1") {
+    const events = await db
+      .collection<SportsDbEvent & { competitionKey: CompetitionKey }>("competitionEvents")
+      .find({ competitionKey })
+      .toArray();
+    formulaOneEventPoints = await buildFormulaOneEventPoints(events);
+  }
+
   const operations = entries.map((entry) => {
-    const baselineMap = new Map((entry.progressBaseline ?? []).map((item) => [item.teamCode, item]));
-    const totalScore = entry.picks.reduce((sum, pick) => {
-      const currentProgress = progress.find((item) => item.teamCode === pick.teamCode);
-      const baselineProgress = baselineMap.get(pick.teamCode);
-      const deltaProgress = getProgressDelta(competitionKey, currentProgress, baselineProgress);
-      return sum + getWeightedPickScore(pick, deltaProgress, competitionKey);
-    }, 0);
+    const totalScore =
+      competitionKey === "formula-1"
+        ? calculateFormulaOneEntryTotal(entry, formulaOneEventPoints)
+        : (() => {
+            const baselineMap = new Map((entry.progressBaseline ?? []).map((item) => [item.teamCode, item]));
+            return entry.picks.reduce((sum, pick) => {
+              const currentProgress = progress.find((item) => item.teamCode === pick.teamCode);
+              const baselineProgress = baselineMap.get(pick.teamCode);
+              const deltaProgress = getProgressDelta(competitionKey, currentProgress, baselineProgress);
+              return sum + getWeightedPickScore(pick, deltaProgress, competitionKey);
+            }, 0);
+          })();
 
     return {
       updateOne: {
@@ -499,16 +513,20 @@ function materializeLeaderboard(
   return entries
     .map((entry) => {
       const baselineMap = new Map((entry.progressBaseline ?? []).map((item) => [item.teamCode, item]));
+      const totalScore =
+        competitionKey === "formula-1"
+          ? entry.totalScore
+          : entry.picks.reduce((sum, pick) => {
+              const currentProgress = progress.find((item) => item.teamCode === pick.teamCode);
+              const baselineProgress = baselineMap.get(pick.teamCode);
+              const deltaProgress = getProgressDelta(competitionKey, currentProgress, baselineProgress);
+              return sum + getWeightedPickScore(pick, deltaProgress, competitionKey);
+            }, 0);
 
       return {
         userId: entry.userId,
         displayName: entry.displayName,
-        totalScore: entry.picks.reduce((sum, pick) => {
-          const currentProgress = progress.find((item) => item.teamCode === pick.teamCode);
-          const baselineProgress = baselineMap.get(pick.teamCode);
-          const deltaProgress = getProgressDelta(competitionKey, currentProgress, baselineProgress);
-          return sum + getWeightedPickScore(pick, deltaProgress, competitionKey);
-        }, 0),
+        totalScore,
         prizeProjection: "Pendiente",
         picks: entry.picks.map((pick) => {
           const team =
@@ -592,6 +610,85 @@ function pointsByRacePosition(position: number) {
   }
 }
 
+function parseEventTimestamp(event: SportsDbEvent) {
+  const timestamp = Date.parse(String((event as { strTimestamp?: string | null }).strTimestamp ?? ""));
+  if (Number.isFinite(timestamp)) {
+    return timestamp;
+  }
+
+  if (!event.dateEvent) {
+    return null;
+  }
+
+  const rawTime = String((event as { strTime?: string | null }).strTime ?? "").trim();
+  const normalizedTime = /^\d{2}:\d{2}(:\d{2})?$/.test(rawTime)
+    ? rawTime.length === 5
+      ? `${rawTime}:00`
+      : rawTime
+    : "00:00:00";
+  const dateTime = Date.parse(`${event.dateEvent}T${normalizedTime}Z`);
+  return Number.isFinite(dateTime) ? dateTime : null;
+}
+
+type FormulaOneEventPoints = {
+  eventId: string;
+  timestamp: number | null;
+  driverPoints: Map<string, number>;
+};
+
+async function buildFormulaOneEventPoints(events: SportsDbEvent[]) {
+  const raceEvents = sortByDateAsc(events).filter((event) => isFormulaOneRaceEvent(event) && Boolean(event.idEvent));
+
+  return Promise.all(
+    raceEvents.map(async (event) => {
+      const results = await fetchEventResults(event.idEvent).catch(() => []);
+      const driverPoints = new Map<string, number>();
+
+      for (const result of results) {
+        const driverCode = result.idPlayer ?? null;
+        if (!driverCode) {
+          continue;
+        }
+
+        const apiPoints = Number(result.intPoints ?? "");
+        const fallbackPoints = pointsByRacePosition(Number(result.intPosition ?? ""));
+        const candidatePoints = Number.isFinite(apiPoints) ? apiPoints : fallbackPoints;
+        const current = driverPoints.get(driverCode) ?? Number.NEGATIVE_INFINITY;
+        if (candidatePoints > current) {
+          driverPoints.set(driverCode, candidatePoints);
+        }
+      }
+
+      return {
+        eventId: event.idEvent,
+        timestamp: parseEventTimestamp(event),
+        driverPoints
+      } satisfies FormulaOneEventPoints;
+    })
+  );
+}
+
+function calculateFormulaOneEntryTotal(entry: Entry, eventPoints: FormulaOneEventPoints[]) {
+  const joinedAtTs = Date.parse(entry.joinedAt ?? "");
+  const hasJoinTs = Number.isFinite(joinedAtTs);
+
+  return entry.picks.reduce((total, pick) => {
+    const multiplier = getRankMultiplier(pick.rank, "formula-1");
+
+    for (const race of eventPoints) {
+      if (hasJoinTs) {
+        if (race.timestamp === null || race.timestamp < joinedAtTs) {
+          continue;
+        }
+      }
+
+      total += (race.driverPoints.get(pick.teamCode) ?? 0) * multiplier;
+    }
+
+    return total;
+  }, 0);
+}
+
 function getBonusesForTeam(
   progress: TeamProgress,
   baseline: TeamProgress = createEmptyProgressBaseline(progress.competitionKey, progress.teamCode)
@@ -641,7 +738,8 @@ export async function getEntryScoreBreakdown(
     const pickMap = new Map(entry.picks.map((pick) => [pick.teamCode, pick]));
     const progressMap = new Map(progress.map((item) => [item.teamCode, item]));
     const baselineMap = new Map((entry.progressBaseline ?? []).map((item) => [item.teamCode, item]));
-    const joinedAtDate = entry.joinedAt?.slice(0, 10);
+    const joinedAtTimestamp = Date.parse(entry.joinedAt ?? "");
+    const hasJoinTimestamp = Number.isFinite(joinedAtTimestamp);
 
     if (porra.competitionKey === "formula-1") {
       const raceEvents = sortByDateAsc(events).filter((event) => {
@@ -649,8 +747,11 @@ export async function getEntryScoreBreakdown(
           return false;
         }
 
-        if (joinedAtDate && event.dateEvent && event.dateEvent < joinedAtDate) {
-          return false;
+        if (hasJoinTimestamp) {
+          const eventTimestamp = parseEventTimestamp(event);
+          if (eventTimestamp === null || eventTimestamp < joinedAtTimestamp) {
+            return false;
+          }
         }
 
         return Boolean(event.idEvent);
@@ -745,8 +846,11 @@ export async function getEntryScoreBreakdown(
     const matches: MatchScoreBreakdown[] = [];
 
     for (const event of sortByDateAsc(events)) {
-      if (joinedAtDate && event.dateEvent && event.dateEvent < joinedAtDate) {
-        continue;
+      if (hasJoinTimestamp) {
+        const eventTimestamp = parseEventTimestamp(event);
+        if (eventTimestamp === null || eventTimestamp < joinedAtTimestamp) {
+          continue;
+        }
       }
 
       const homeCode = event.idHomeTeam ?? null;
